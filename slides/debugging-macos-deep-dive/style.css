@@ -21,7 +21,7 @@ body,
 .slidev-layout {
   background: var(--matrix-bg);
   color: var(--matrix-green-mid);
-  font-family: 'Monaco', 'Menlo', monospace;
+  font-family: 'Monaco', 'Menlo', 'Apple Color Emoji', monospace;
   font-variant-ligatures: none;
 }
 
@@ -32,7 +32,7 @@ body,
 .slidev-layout h3,
 .slidev-layout h4 {
   color: var(--matrix-green);
-  font-family: 'Monaco', 'Menlo', monospace;
+  font-family: 'Monaco', 'Menlo', 'Apple Color Emoji', monospace;
   font-weight: 400;
   letter-spacing: -0.01em;
 }

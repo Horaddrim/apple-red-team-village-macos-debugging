@@ -736,33 +736,272 @@ particular may behave differently with SIP on.
 
 ---
 
-# Finally, proper debugging
+# pra não falar que eu não mencionei iOS
+
+<div class="text-sm op-60 -mt-3 mb-5">mesmo protocolo, só que a trap acontece do outro lado do cabo</div>
+
+<div class="ios">
+
+<div class="ibox host">lldb &nbsp;<span class="op-50">· host, macOS</span></div>
+<div class="iarrow">GDB Remote Serial Protocol</div>
+<div class="ibox wire">usbmuxd &nbsp;<span class="op-50">· <code>/var/run/usbmuxd</code></span></div>
+<div class="iarrow">USB &nbsp;ou&nbsp; WiFi</div>
+<div class="ibox svc">lockdownd &nbsp;<span class="op-50">· autentica o pareamento</span></div>
+<div class="iarrow"><code>com.apple.debugserver</code></div>
+<div class="ibox svc">debugserver &nbsp;<span class="op-50">· roda no device</span></div>
+<div class="iarrow"><code>task_for_pid()</code> &nbsp;·&nbsp; a mesma trap <span class="fsw2">-45</span></div>
+<div class="ibox app">o app alvo</div>
+
+</div>
+
+<style>
+.ios {
+  margin-top: 0.2rem;
+}
+.ibox {
+  text-align: center;
+  font-size: 0.68rem;
+  padding: 0.4em 0.6em;
+  border: 1px solid;
+  border-radius: 2px;
+}
+.ibox.host {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  color: #ffb4b4;
+}
+.ibox.wire {
+  border-color: #6b7280;
+  background: rgba(107, 114, 128, 0.1);
+  color: #c9ccd1;
+}
+.ibox.svc {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  color: #b9d2ff;
+}
+.ibox.app {
+  border-color: #6b7280;
+  background: rgba(107, 114, 128, 0.06);
+  color: #9aa0a6;
+}
+.iarrow {
+  text-align: center;
+  font-size: 0.56rem;
+  opacity: 0.5;
+  padding: 0.18em 0;
+}
+.iarrow::before {
+  content: '↓';
+  display: block;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.fsw2 {
+  color: #00ff41;
+}
+</style>
 
 <!--
-TODO: content.
+The "sim, eu sei que iOS existe" slide. One minute, no demo.
 
-Suggested: now that we have a task port, what do we actually do with it —
-exception ports, thread state, memory read/write.
+The point: none of this talk was macOS-only. The protocol between lldb and
+debugserver is the GDB Remote Serial Protocol either way. What changes on iOS is
+only the TRANSPORT and the fact that you cannot just fork/exec debugserver
+yourself — you have to ask lockdownd for it.
+
+usbmuxd multiplexes TCP over the USB cable (socket lives at /var/run/usbmuxd on
+the host). Over WiFi it is the same protocol without the multiplexer. lockdownd
+is the device-side gatekeeper: it validates the pairing record and only then
+starts the requested service by name.
+
+Service names verified in libimobiledevice's debugserver.h:
+    #define DEBUGSERVER_SERVICE_NAME "com.apple.debugserver"
+    #define DEBUGSERVER_SECURE_SERVICE_NAME  ... ".DVTSecureSocketProxy"
+
+And the punchline for the talk: once debugserver is running on the device, it
+calls task_for_pid on the target app — the exact same trap -45, gated by the
+exact same entitlement logic we spent the whole talk on. get-task-allow on the
+app is what makes a development build debuggable. Same bit, different silicon.
+
+Caveat: the service names come from libimobiledevice, not from Apple docs. Xcode
+is not installed on this laptop so I could not confirm them in DVTFoundation.
 -->
 
 ---
 
-# Putting it together
+# uns macetes aleatórios
+
+<div class="text-sm op-60 -mt-3 mb-5">hooka isso e você vê todo o XPC do processo</div>
+
+<div class="xpc">
+
+```text {all|6}
+$ dyld_info -exports /usr/lib/system/libxpc.dylib | grep xpc_pipe
+
+    0x00001B9C  _xpc_pipe_create
+    0x00001B8C  _xpc_pipe_create_from_port
+    0x00033ECC  _xpc_pipe_create_reply_from_port
+    0x00005E6C  _xpc_pipe_routine
+    0x00033E28  _xpc_pipe_routine_async
+    0x00005DDC  _xpc_pipe_routine_with_flags
+    0x0001609C  _xpc_pipe_simpleroutine
+```
+
+</div>
+
+<div class="text-xs op-60 mt-5 leading-relaxed">
+  o símbolo é <span class="text-[#00ff41]"><code>_xpc_pipe_routine</code></span>
+  — com underscore, que é o mangling C de <code>xpc_pipe_routine()</code>
+</div>
+
+<div class="text-xs op-45 mt-2 leading-relaxed">
+  17 símbolos <code>xpc_pipe*</code> ao todo &nbsp;·&nbsp; e nenhuma declaração:
+  nem em <code>/usr/include/xpc/</code>, nem no <code>libxpc.tbd</code> do SDK ;)
+</div>
+
+<style>
+.xpc pre {
+  font-size: 0.62rem !important;
+  line-height: 1.55;
+}
+</style>
 
 <!--
-TODO: content.
+Slide de um item só. Tempo pra falar, não pra ler.
 
-Suggested: assemble the pieces from the prior slides into one coherent path
-from "I have a pid" to "I am stopped at a breakpoint."
+xpc_pipe_routine é o funil por onde passa praticamente toda conversa XPC de um
+processo. Hooka essa função e você vê request e reply de tudo — sem precisar de
+task port, sem entitlement, sem kernel. É DYLD_INTERPOSE do primeiro demo
+apontado pra uma coisa que importa de verdade.
+
+Verificado nesta máquina, não é de cabeça:
+
+  dyld_info -exports /usr/lib/system/libxpc.dylib | grep xpc_pipe
+      0x00005E6C  _xpc_pipe_routine
+      0x00033E28  _xpc_pipe_routine_async
+      0x00001B9C  _xpc_pipe_create
+      0x00001B8C  _xpc_pipe_create_from_port
+
+O detalhe que vale contar: NÃO existe declaração dela em lugar nenhum. Não está
+em /usr/include/xpc/, não está no libxpc.tbd do SDK, não está em nenhum header
+do disco. Só o símbolo, no dyld shared cache. Se alguém perguntar a assinatura,
+seja honesto: a que circula por aí vem de engenharia reversa da comunidade, não
+de documentação da Apple.
+
+Ligação com o resto da talk: esse é o vetor mais barato de todos. Nada de
+task_for_pid, nada de csflags, nada de entitlement. Só trocar um símbolo antes
+da main() rodar.
 -->
 
 ---
+layout: center
+class: text-center
+---
 
-# Okay, but what about LLDB?
+# obrigado!
+
+<div class="thanks">
+
+<div class="tbox name">Igor Franca</div>
+
+<div class="tbox typed">
+  <span class="tw" style="--d: 0.4s">obrigado especial a <a href="https://instagram.com/mobseccrew" target="_blank">@mobseccrew</a></span>
+  <span class="tw" style="--d: 1.7s">e a <a href="https://instagram.com/appleredteamvillage" target="_blank">@appleredteamvillage</a></span>
+  <span class="tw end" style="--d: 3s">e a vocês por assistirem 🫶</span>
+</div>
+
+<div class="tbox link">
+  <a href="https://github.com/Horaddrim" target="_blank">
+    <carbon:logo-github /> &nbsp;github.com/Horaddrim
+  </a>
+</div>
+
+<div class="tbox link">
+  <a href="https://linkedin.com/in/igor.franca" target="_blank">
+    <carbon:logo-linkedin /> &nbsp;linkedin.com/in/igor.franca
+  </a>
+</div>
+
+</div>
+
+<style>
+.thanks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 2rem;
+}
+.tbox {
+  min-width: 24rem;
+  padding: 0.55em 1.2em;
+  border: 1px solid var(--matrix-green-faint);
+  border-radius: 2px;
+  font-size: 0.9rem;
+}
+.tbox.name {
+  border-color: var(--matrix-green);
+  color: var(--matrix-green);
+  font-size: 1.1rem;
+}
+.tbox.typed {
+  border-style: dashed;
+  color: var(--matrix-green-mid);
+  font-size: 0.82rem;
+  padding: 1em 1.9em;
+  line-height: 1.75;
+  max-width: 94%;
+}
+.tbox.link a {
+  border-bottom: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+}
+/* Uma mascara por linha, escalonada pelo --d inline. Como desliza por
+   porcentagem, nao depende do numero de caracteres — da pra editar o texto
+   sem mexer no CSS. */
+.tw {
+  position: relative;
+  display: block;
+  width: fit-content;
+  margin: 0 auto;
+  white-space: nowrap;
+}
+.tw::after {
+  content: '';
+  position: absolute;
+  top: 0.12em;
+  bottom: 0.12em;
+  left: 0;
+  right: -2px;
+  background: var(--matrix-bg);
+  border-left: 2px solid transparent;
+  animation: tw 1.2s steps(26, end) var(--d, 0.4s) forwards,
+             twcur 0.6s step-end var(--d, 0.4s) 2;
+}
+.tw.end::after {
+  animation: tw 1.2s steps(26, end) var(--d, 0.4s) forwards,
+             twcur 0.6s step-end var(--d, 0.4s) infinite;
+}
+@keyframes tw {
+  to {
+    left: 100%;
+  }
+}
+@keyframes twcur {
+  0%,
+  100% {
+    border-left-color: var(--matrix-green);
+  }
+  50% {
+    border-left-color: transparent;
+  }
+}
+</style>
 
 <!--
-TODO: content.
-
-Suggested close: everything we just built by hand is what debugserver does for you —
-and now the entitlement errors it prints are readable instead of mysterious.
+Fim. Deixa esse slide no ar durante o Q&A — os links ficam visíveis.
 -->
