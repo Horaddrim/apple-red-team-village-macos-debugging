@@ -1,0 +1,161 @@
+:root {
+  --matrix-bg: #000000;
+  --matrix-green: #00ff41;
+  --matrix-green-mid: #00cc34;
+  --matrix-green-dim: #0a8a26;
+  --matrix-green-faint: #0d3b17;
+
+  --slidev-theme-primary: #00ff41;
+  --slidev-code-background: #040a04;
+  --slidev-code-foreground: var(--matrix-green-mid);
+  --slidev-code-font-family: 'Monaco', 'Menlo', monospace;
+  --slidev-code-font-size: 0.85em;
+  --slidev-code-line-height: 1.6;
+  --slidev-code-radius: 2px;
+  --slidev-slide-container-background: var(--matrix-bg);
+}
+
+html,
+body,
+#slide-content,
+.slidev-layout {
+  background: var(--matrix-bg);
+  color: var(--matrix-green-mid);
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-variant-ligatures: none;
+}
+
+/* Monaco ships Regular only; synthesized bold is muddy at heading sizes.
+   Hierarchy comes from size and color instead. */
+.slidev-layout h1,
+.slidev-layout h2,
+.slidev-layout h3,
+.slidev-layout h4 {
+  color: var(--matrix-green);
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.slidev-layout h1 {
+  font-size: 2.4rem;
+  line-height: 1.15;
+  text-shadow: 0 0 18px rgba(0, 255, 65, 0.35);
+}
+
+.slidev-layout h2 {
+  font-size: 1.5rem;
+  color: var(--matrix-green-mid);
+}
+
+.slidev-layout h1 + p {
+  color: var(--matrix-green-dim);
+  opacity: 1;
+}
+
+.slidev-layout ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.slidev-layout ul > li {
+  position: relative;
+  padding-left: 1.4em;
+  margin: 0.55em 0;
+}
+
+.slidev-layout ul > li::before {
+  content: '>';
+  position: absolute;
+  left: 0;
+  color: var(--matrix-green);
+}
+
+.slidev-layout ul ul > li::before {
+  content: '-';
+  color: var(--matrix-green-dim);
+}
+
+.slidev-layout strong {
+  color: var(--matrix-green);
+  font-weight: 400;
+}
+
+.slidev-layout em {
+  color: var(--matrix-green);
+  font-style: normal;
+  border-bottom: 1px dashed var(--matrix-green-dim);
+}
+
+.slidev-layout a {
+  color: var(--matrix-green);
+  border-bottom: 1px solid var(--matrix-green-faint);
+  text-decoration: none;
+}
+
+.slidev-layout code {
+  color: var(--matrix-green);
+  background: #071007;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--matrix-green-faint);
+  border-radius: 2px;
+}
+
+.slidev-layout pre code {
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+.slidev-layout .slidev-code-wrapper,
+.slidev-layout pre {
+  border: 1px solid var(--matrix-green-faint);
+}
+
+.slidev-layout blockquote {
+  border-left: 2px solid var(--matrix-green);
+  background: transparent;
+  color: var(--matrix-green-dim);
+  padding-left: 0.9em;
+}
+
+.slidev-layout hr {
+  border-color: var(--matrix-green-faint);
+}
+
+.slidev-layout table th,
+.slidev-layout table td {
+  border-color: var(--matrix-green-faint);
+}
+
+.slidev-layout table th {
+  color: var(--matrix-green);
+  font-weight: 400;
+}
+
+/* Dimmed line-highlight state should stay legible on a projector. */
+.slidev-code .line.dimmed {
+  opacity: 0.35;
+}
+
+.slidev-page-number,
+.slidev-icon-btn {
+  color: var(--matrix-green-dim);
+}
+
+/* Source attribution under any box quoting xnu. Paths are relative to the
+   apple-oss-distributions/xnu repo root. */
+.xnusrc {
+  margin-top: 0.6em;
+  font-size: 0.55rem;
+  line-height: 1.6;
+  opacity: 0.45;
+}
+
+.xnusrc code {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+}
