@@ -9,13 +9,13 @@
         (const void *)(unsigned long)&_replacee \
     };
 
-int gallywix(const char *candidate);
+int check_passphrase(const char *candidate);
 
-int goblin_gallywix(const char *candidate)
+int fake_check_passphrase(const char *candidate)
 {
     (void)candidate;
     printf("hello\n");
     return 1;
 }
 
-DYLD_INTERPOSE(goblin_gallywix, gallywix)
+DYLD_INTERPOSE(fake_check_passphrase, check_passphrase)

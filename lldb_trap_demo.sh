@@ -4,7 +4,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="${2:-target-hardened}"
 PID="$1"
 
-[ -x "$DIR/mach_vm_adventures" ] || { echo "mach_vm_adventures missing - run ./build.sh once" >&2; exit 1; }
+[ -x "$DIR/hddb" ] || { echo "hddb missing - run ./build.sh once" >&2; exit 1; }
 
 if [ -z "$PID" ]; then
     PID=$(pgrep -n -x "$BIN")
@@ -26,7 +26,7 @@ else
 fi
 
 echo "target:  $BIN (pid $PID)"
-echo "tool:    mach_vm_adventures read $PID $ADDR 40"
+echo "tool:    hddb read $PID $ADDR 40"
 echo
 echo "at the breakpoint:"
 echo "  si                 step one instruction (mov x16, #-45)"
@@ -38,4 +38,4 @@ echo
 exec lldb \
     -o "breakpoint set --name task_for_pid" \
     -o "run" \
-    -- "$DIR/mach_vm_adventures" read "$PID" "$ADDR" 40
+    -- "$DIR/hddb" read "$PID" "$ADDR" 40

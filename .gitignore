@@ -1,9 +1,13 @@
 /target
 /target-hardened
 /interpose.dylib
-/mach_vm_adventures
+/hddb
 /csflags
 
 *.dSYM/
 
 .DS_Store
+
+/mach_exc.h
+/mach_excServer.c
+/mach_excUser.c

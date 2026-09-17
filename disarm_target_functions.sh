@@ -15,7 +15,7 @@ if [ -z "$FUNC" ]; then
     echo "--- functions in target (disarm -S) ---"
     "$DISARM" -S "$DIR/target" 2>&1 | grep -v 'Slot  *[0-9]' | grep ' T '
     echo
-    echo "usage: $(basename "$0") <function>   e.g. $(basename "$0") arthas"
+    echo "usage: $(basename "$0") <function>   e.g. $(basename "$0") detect_debugger"
     exit 0
 fi
 

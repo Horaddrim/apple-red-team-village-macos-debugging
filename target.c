@@ -5,7 +5,9 @@
 #include <sys/sysctl.h>
 #include <sys/proc.h>
 
-static const unsigned char kFrostmourne[] = {
+#include "proc_flags.h"
+
+static const unsigned char kEncodedSecret[] = {
     0x00, 0x17, 0x0c, 0x1c, 0x0b, 0x1a, 0x0d, 0x04,
     0x1e, 0x16, 0x10, 0x00, 0x1b, 0x03, 0x12, 0x16,
     0x0c, 0x19, 0x0a, 0x15, 0x1b, 0x16, 0x15, 0x17,
@@ -15,11 +17,12 @@ static const unsigned char kFrostmourne[] = {
 
 static const char kAzeroth[] = "azeroth";
 
-int arthas(void)
+int detect_debugger(void)
 {
     struct kinfo_proc info;
     size_t size = sizeof(info);
     int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    unsigned int status = 0;
     int traced;
 
     memset(&info, 0, sizeof(info));
@@ -31,25 +34,34 @@ int arthas(void)
 
     printf("p_flag=0x%08x  P_TRACED=%d  p_debugger=%d\n",
            info.kp_proc.p_flag, traced, info.kp_proc.p_debugger);
+    print_flag_bits(kProcFlags, FLAG_COUNT(kProcFlags),
+                    (unsigned int)info.kp_proc.p_flag, "not in sys/proc.h");
+
+    /* Same process, the other flag word: what AMFI wrote at exec(). */
+    if (csops(getpid(), CS_OPS_STATUS, &status, sizeof(status)) == 0) {
+        printf("csflags=0x%08x\n", status);
+        print_flag_bits(kCSFlags, FLAG_COUNT(kCSFlags), status,
+                        "not in cs_blobs.h");
+    }
 
     return traced;
 }
 
-int gallywix(const char *candidate)
+int check_passphrase(const char *candidate)
 {
-    char buf[sizeof(kFrostmourne) + 1];
+    char buf[sizeof(kEncodedSecret) + 1];
     size_t klen = sizeof(kAzeroth) - 1;
     size_t i;
     int ok;
 
-    if (candidate == NULL || strlen(candidate) != sizeof(kFrostmourne)) {
+    if (candidate == NULL || strlen(candidate) != sizeof(kEncodedSecret)) {
         return 0;
     }
 
-    for (i = 0; i < sizeof(kFrostmourne); i++) {
-        buf[i] = (char)(kFrostmourne[i] ^ kAzeroth[i % klen]);
+    for (i = 0; i < sizeof(kEncodedSecret); i++) {
+        buf[i] = (char)(kEncodedSecret[i] ^ kAzeroth[i % klen]);
     }
-    buf[sizeof(kFrostmourne)] = '\0';
+    buf[sizeof(kEncodedSecret)] = '\0';
 
     ok = (strcmp(buf, candidate) == 0);
     memset(buf, 0, sizeof(buf));
@@ -64,22 +76,22 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (arthas()) {
-        fprintf(stderr, "frostmourne hungers\n");
+    if (detect_debugger()) {
+        fprintf(stderr, "debugger detected\n");
         return 3;
     }
 
     if (argc == 3 && strcmp(argv[2], "hold") == 0) {
-        printf("pid=%d kFrostmourne=%p\n", getpid(), (const void *)kFrostmourne);
+        printf("pid=%d kEncodedSecret=%p\n", getpid(), (const void *)kEncodedSecret);
         fflush(stdout);
         for (;;) {
-            printf("gallywix=%d\n", gallywix(argv[1]));
+            printf("check_passphrase=%d\n", check_passphrase(argv[1]));
             fflush(stdout);
             sleep(2);
         }
     }
 
-    if (gallywix(argv[1])) {
+    if (check_passphrase(argv[1])) {
         printf("access granted\n");
         return 0;
     }

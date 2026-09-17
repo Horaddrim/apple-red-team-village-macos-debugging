@@ -12,7 +12,7 @@ if [ -z "$FUNC" ]; then
     echo "--- __TEXT,__text entry points (otool -tV) ---"
     otool -tV "$DIR/target" | grep -E '^_[A-Za-z0-9_]+:$'
     echo
-    echo "usage: $(basename "$0") <function>   e.g. $(basename "$0") arthas"
+    echo "usage: $(basename "$0") <function>   e.g. $(basename "$0") detect_debugger"
     exit 0
 fi
 

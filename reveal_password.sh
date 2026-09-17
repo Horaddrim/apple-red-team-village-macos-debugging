@@ -6,7 +6,7 @@ BIN="${2:-target}"
 KEY="azeroth"
 SIZE=40
 
-[ -x "$DIR/mach_vm_adventures" ] || { echo "mach_vm_adventures missing - run ./build.sh once" >&2; exit 1; }
+[ -x "$DIR/hddb" ] || { echo "hddb missing - run ./build.sh once" >&2; exit 1; }
 
 if [ -z "$PID" ]; then
     PID=$(pgrep -n -x "$BIN")
@@ -43,14 +43,14 @@ printf '  __TEXT base     0x%s\n' "$BASE"
 printf '  computed addr   %s\n' "$ADDR"
 echo
 echo "--- command ---"
-echo "  ./mach_vm_adventures read $PID $ADDR $SIZE"
+echo "  ./hddb read $PID $ADDR $SIZE"
 echo
 
 read -n 1 -s -r -p "press any key to run it "
 echo
 echo
 
-OUT=$("$DIR/mach_vm_adventures" read "$PID" "$ADDR" "$SIZE" 2>&1)
+OUT=$("$DIR/hddb" read "$PID" "$ADDR" "$SIZE" 2>&1)
 STATUS=$?
 echo "$OUT"
 

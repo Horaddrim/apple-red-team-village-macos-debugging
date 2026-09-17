@@ -474,6 +474,10 @@ target-hardened — control, read AND inspect all fail identically. Only
 task_name_for_pid survives, and a name port gives you neither read nor write.
 Asking for less does not get you more. vmmap wins on entitlements, full stop.
 
+That table is SIP-independent: I re-measured all four flavors against all three
+processes with SIP enabled and it came back identical, cell for cell. If someone
+asks whether SIP changes the answer here — it does not.
+
 .read.safe is worth dwelling on: it is not in Apple's public entitlement
 documentation and it did not appear anywhere in the xnu source sweep, because
 the check lives in AMFI, which is closed source. You only learn it exists by
@@ -514,9 +518,9 @@ clicks: 2
 
 | processo          | `csflags`    | bit que decide                        |
 | ----------------- | ------------ | ------------------------------------- |
-| `target`          | `0x22000005` | `CS_GET_TASK_ALLOW`                   |
-| `target-hardened` | `0x22010001` | `CS_RUNTIME`                          |
-| `launchd`         | `0x26014a01` | `CS_RESTRICT` · `CS_PLATFORM_BINARY`  |
+| `target`          | `0x22000205` | `CS_GET_TASK_ALLOW`                   |
+| `target-hardened` | `0x22011311` | `CS_RUNTIME` · `CS_FORCED_LV`         |
+| `launchd`         | `0x26015b11` | `CS_RESTRICT` · `CS_PLATFORM_BINARY`  |
 
 </div>
 
@@ -532,9 +536,9 @@ clicks: 2
 </div>
 
 <div v-click="2" class="mt-3 text-sm">
-  <span class="op-60"> bit</span> <span class="text-[#00ff41]">0x800</span>
-  <span class="op-60"> é o que bloqueia </span><code>DYLD_INSERT_LIBRARIES</code><span class="op-60">
-  — não o hardened runtime</span>
+  <span class="op-60"> bit</span> <span class="text-[#00ff41]">0x10</span>
+  <span class="op-60"> bloqueia </span><code>DYLD_INSERT_LIBRARIES</code><span class="op-60">
+  — quem seta é o AMFI, não o </span><code>codesign -o runtime</code>
 </div>
 
 <style>
@@ -586,13 +590,33 @@ Click 1 — CS_GET_TASK_ALLOW is 0x4. target has it, target-hardened does not.
 That single bit is the entire difference between the demo working and printing
 KERN_FAILURE. Not SIP, not the flavor you asked for, not root. One bit.
 
-Click 2 — and here is the correction I owe the audience if they were paying
-attention earlier. The interpose demo STILL WORKS against target-hardened. That
-looks wrong until you read the flags: dyld insertion is governed by CS_RESTRICT
-(0x800), library validation by CS_REQUIRE_LV (0x2000). Hardened runtime is
-CS_RUNTIME (0x10000) — a completely different bit. codesign -o runtime sets only
-CS_RUNTIME, so the binary was never restricted for dyld. launchd has 0x800, which
-is why nothing works against it.
+Click 2 — the nuance that makes this slide worth its time. "Hardened runtime
+blocks DYLD_INSERT_LIBRARIES" is the folk answer and it is wrong in an
+interesting way.
+
+codesign -o runtime sets exactly ONE bit on disk: CS_RUNTIME (0x10000). Look at
+the CD: flags=0x10002(adhoc,runtime). Nothing else. It does NOT set CS_RESTRICT
+(0x800), it does NOT set CS_REQUIRE_LV (0x2000).
+
+What actually blocks the insertion on this machine is CS_FORCED_LV (0x10) —
+library validation — and AMFI adds it AT EXEC, derived from CS_RUNTIME, along
+with CS_HARD (0x100) and CS_ENFORCEMENT (0x1000). That is why the flags word
+(0x22011311) has four bits the signature never carried.
+
+Proof that it is derived and not signed in: the CodeDirectory patch two slides
+from now clears CS_RUNTIME alone, and all three of those bits disappear with it.
+
+So the honest phrasing on stage: hardened runtime does not block dyld insertion
+by itself — it makes AMFI force library validation, and THAT blocks it. Name the
+bit, not the feature. CS_RESTRICT never appears on our binary at all; it is
+launchd's bit (0x800), which is a different story: a platform binary.
+
+I MEASURED THE OTHER SIDE OF THIS. With SIP disabled, AMFI does NOT set
+CS_FORCED_LV — target-hardened came up 0x22010001 and the interpose hook fired
+happily against it. Same binary, same signature, same codesign -o runtime. If
+someone in the audience tries this on a machine with SIP off and gets the
+opposite result, that is why, and it is worth saying out loud: the code
+signature is identical, only the AMFI policy changed.
 
 If asked about libsystem_secinit (the Project Zero fuzzing article): that is the
 App Sandbox, a userspace library initializer that decides whether to contact
@@ -605,7 +629,11 @@ from the first demo, pointed at the security layer itself.
 Demo: ./csflags <pid> against target, target-hardened and 1.
 
 QUEM ESCREVE: nobody in userspace. AMFI plus the kernel parse the CodeDirectory
-at exec() and write the word once. The entitlement-derived bits are even grouped
+at exec() and write the word there. Careful with "once", because I measured
+otherwise: attaching a debugger makes the KERNEL rewrite it — CS_DEBUGGED and
+CS_INVALID_ALLOWED go on, CS_KILL comes off (0x22000205 -> 0x32000025 on
+target). Still nothing in userspace writing it, but it is not frozen at exec
+either. The very next slide has the full table. The entitlement-derived bits are even grouped
 in xnu as CS_ENTITLEMENT_FLAGS = CS_GET_TASK_ALLOW | CS_INSTALLER |
 CS_DATAVAULT_CONTROLLER | CS_NVRAM_UNRESTRICTED. 0x4 can only come from a signed
 entitlements blob.
@@ -617,6 +645,210 @@ these flags; it is told.
 -->
 
 ---
+clicks: 3
+---
+
+# essa palavra muda debaixo de você
+
+<div class="text-sm op-60 -mt-3 mb-4">quem escreve o <code>csflags</code> depois do <code>exec()</code></div>
+
+<div class="csd">
+
+| estado do processo              | `P_TRACED` | `csflags`    | o que entra / sai        |
+| ------------------------------- | ---------- | ------------ | ------------------------ |
+| intocado                        | `0`        | `0x22000205` | `VALID GET_TASK_ALLOW KILL SIGNED` |
+| só `task_for_pid`               | `0`        | `0x22000225` | `+INVALID_ALLOWED`       |
+| `hddb break` &nbsp;· brk + trap | `0`        | `0x22000225` | — nada muda              |
+| `lldb` &nbsp;· ou só `ptrace`   | `1`        | `0x32000025` | `+DEBUGGED` `−KILL`      |
+
+</div>
+
+<div class="xnusrc">
+  <code>./csflags &lt;pid&gt;</code> &nbsp;·&nbsp; mesmo pid, quatro momentos
+  &nbsp;·&nbsp; nomes sem o prefixo <code>CS_</code>
+</div>
+
+<div v-click="1" class="mt-6 text-sm">
+  <span class="op-60">o task port já custa </span><code>+CS_INVALID_ALLOWED</code>
+  <span class="op-60"> — antes de ler um byte</span>
+</div>
+
+<div v-click="2" class="mt-3 text-sm">
+  <code>+CS_DEBUGGED</code> <code>-CS_KILL</code>
+  <span class="op-60"> são assinatura do </span><code>ptrace</code><span class="op-60">,
+  não de "ter um debugger"</span>
+</div>
+
+<div v-click="3" class="mt-3 text-sm">
+  <span class="op-60">e </span><code>CS_DEBUGGED</code>
+  <span class="op-60"> não volta atrás — </span>
+  <span class="text-[#00ff41]">is or HAS BEEN debugged</span>
+</div>
+
+<style>
+.csd table {
+  font-size: 0.6rem;
+}
+.csd th,
+.csd td {
+  padding: 0.35em 0.7em;
+}
+.csd td:first-child {
+  opacity: 0.7;
+}
+.csd td:last-child {
+  color: #00ff41;
+  opacity: 0.85;
+}
+.csd tr:first-child td:last-child {
+  color: inherit;
+  opacity: 0.5;
+}
+.csd tr:last-child td:nth-child(2),
+.csd tr:last-child td:nth-child(3) {
+  color: #00ff41;
+}
+</style>
+
+<!--
+The slide that qualifies the one before it. "AMFI writes the word at exec" is
+true; "and then it never changes" is not, and I only found this because target
+started printing its own csflags.
+
+THE TABLE IS ONE PID, FOUR MOMENTS. Run ./csflags against the same running
+target between each step. Nothing is rebuilt or re-signed in between.
+
+Row 2 is the one that surprises people: merely handing out the task control port
+flips CS_INVALID_ALLOWED — before a single byte is read or written. I isolated
+it with a tool that only calls task_for_pid and immediately deallocates. The
+kernel is pre-authorising the port holder to invalidate pages, because that is
+what a port holder is for.
+
+Row 3 is our own debugger. It writes a brk, catches EXC_BREAKPOINT, restores,
+and the target runs on — and the word is IDENTICAL to row 2. No CS_DEBUGGED.
+CS_KILL still set.
+
+Row 4 is lldb. And the important part: I reproduced that exact word with
+ptrace(PT_ATTACHEXC) alone — no Mach exception ports, no task_for_pid, fifteen
+lines of C. So it is ptrace that does this, not debugserver, and not "being
+debugged" in the abstract.
+
+CLICK 2 IS THE ONE TO DWELL ON. Look at which bit ptrace takes AWAY: CS_KILL,
+"kill if it becomes invalid". A software breakpoint is a write into a signed
+executable page, which invalidates it. The ptrace path asks the kernel for a
+waiver up front. Our Mach path never asks — and is never killed either, which I
+did not expect and cannot fully explain: the mach_vm_protect(VM_PROT_COPY) page
+is presumably not what the check watches. Say that honestly if it comes up; I
+did not chase it into xnu.
+
+CLICK 3 — CS_DEBUGGED survives detach. Kill lldb, csflags stays 0x32000025. The
+flag name is literal: "is or HAS BEEN debugged". A process carries it for life.
+
+HONESTY: all of this is measured behaviour, not source-confirmed. I did not find
+the xnu line that sets CS_DEBUGGED. If someone asks "where in the kernel?", the
+correct answer is "I measured it from outside, I did not read that path".
+
+Demo, if there is time: ./csflags <pid>, then ./hddb break <pid> <addr> in
+another terminal, then ./csflags <pid> again — unchanged. Then attach lldb and
+watch it jump.
+-->
+
+---
+clicks: 1
+---
+
+# e o lldb? aí sim o hardened runtime morde
+
+<div class="text-sm op-60 -mt-3 mb-5">mesmo comando, mesmo <code>debugserver</code> — o alvo é que muda</div>
+
+<div class="grid grid-cols-2 gap-6 attach">
+
+<div>
+
+```text
+$ lldb -b -o run -- ./target <pass>
+
+p_flag=0x00005806  P_TRACED=1
+  0x00000800  P_TRACED
+  0x00001000  P_DISABLE_ASLR
+csflags=0x32000025
+  0x00000020  CS_INVALID_ALLOWED
+  0x10000000  CS_DEBUGGED
+```
+
+<div class="text-xs op-70 mt-3 leading-relaxed">
+  o binário decodifica as duas palavras sozinho — e as duas mudaram.
+</div>
+
+</div>
+
+<div>
+
+```text
+$ lldb -b -o run -- ./target-hardened <pass>
+
+error: attach failed
+(Not allowed to attach to process.)
+```
+
+<div class="text-xs op-70 mt-3 leading-relaxed">
+  o <code>debugserver</code> é entitled — e mesmo assim o AMFI recusa.
+</div>
+
+</div>
+
+</div>
+
+<div v-click="1" class="mt-7 text-sm">
+  <span class="op-60">o alvo não tem entitlement nenhum pra isso — quem decide é o
+  </span><code>CS_RUNTIME</code><span class="op-60"> gravado no </span><code>exec()</code>
+</div>
+
+<style>
+.attach pre {
+  font-size: 0.62rem !important;
+  line-height: 1.5;
+}
+</style>
+
+<!--
+The beat this deck did not have until SIP got turned back on. Worth the minute.
+
+Two lldb runs, same flags, same debugserver. Against target it attaches. Against
+target-hardened: "attach failed (Not allowed to attach to process)".
+
+WHY THIS IS THE INTERESTING ONE. debugserver carries
+com.apple.private.cs.debugger — it is the most entitled debugging thing on the
+machine, and it still gets told no. So this is not the entitlement story from the
+last two slides running again. The decision is on the TARGET side: AMFI wrote
+CS_RUNTIME at exec, and a hardened-runtime process without
+com.apple.security.cs.debugger (or get-task-allow) is simply not debuggable. The
+attacker being privileged does not enter into it.
+
+Left column ties back to the anti-debug demo: P_TRACED is lit, arthas notices,
+"frostmourne hungers". Same run, two different layers watching each other — the
+kernel let lldb in, and the process can still see that it happened.
+
+Callback to the previous slide: csflags=0x32000025 here is row 4 of that table.
+CS_DEBUGGED and CS_INVALID_ALLOWED on, CS_KILL off — ptrace's doing, not the
+hardened runtime's. Point at it, do not re-explain it.
+
+HONESTY, and it matters because someone will try this at home: on a machine with
+SIP DISABLED this slide does not exist. I measured it — with SIP off lldb
+attaches to target-hardened perfectly happily, because that is exactly what SIP
+relaxes. Same binary, same signature. If you demo this, confirm `csrutil status`
+says enabled first.
+
+Do not oversell it either: this blocks the DEBUGGER. reveal_password.sh against
+target-hardened fails for a completely different reason (no CS_GET_TASK_ALLOW),
+and it failed with SIP off too. Two separate gates, and the next slide separates
+them cleanly by turning this one off with a single byte.
+
+Demo: lldb -b -o run -o quit -- ./target-hardened <pass>, then the same against
+./target. Nothing else needed.
+-->
+
+---
 layout: two-cols-header
 layoutClass: gap-8
 clicks: 4
@@ -624,18 +856,18 @@ clicks: 4
 
 # tentando atacar essa flag diretamente rola?
 
-<div class="text-sm op-60 -mt-3 mb-4">quatro tentativas — só uma funciona, e não é a mais divertida</div>
+<div class="text-sm op-60 -mt-3 mb-4">quatro tentativas — uma funciona, e uma funciona pela metade</div>
 
 ::left::
 
-<v-clicks depth="2">
+<v-clicks>
 
 - <span class="no">✗</span> &nbsp;`csops(CS_OPS_SET_STATUS)`
   - o kernel mascara a entrada: só bits de hardening
 - <span class="no">✗</span> &nbsp;`mach_vm_write` na flag
   - csflags mora no kernel, não no processo
-- <span class="no">✗</span> &nbsp;patchear o CodeDirectory
-  - limpa `CS_RUNTIME` — e o `0x4` continua ausente
+- <span class="half">~</span> &nbsp;patchear o CodeDirectory
+  - limpa `CS_RUNTIME` — volta o `lldb`, mas o `0x4` continua ausente
 - <span class="yes">✓</span> &nbsp;`codesign -s - --entitlements`
   - reassina; AMFI relê no próximo `exec()`
 
@@ -643,7 +875,11 @@ clicks: 4
 
 ::right::
 
-```c {1-7|9}
+<div class="relative w-full atk" style="height: 300px">
+
+<div v-click="[1, 2]" class="absolute inset-0">
+
+```c
 /* only allow setting a subset
    of all code sign flags */
 flags &= CS_HARD | CS_EXEC_SET_HARD |
@@ -655,14 +891,70 @@ flags &= CS_HARD | CS_EXEC_SET_HARD |
 proc_csflags_set(p, flags);
 ```
 
-<div class="text-xs op-70 mt-3 leading-relaxed">
-  <code>proc_csflags_set</code> é um <span class="text-[#00ff41]">OR</span>, nunca
-  um assign. E <code>CS_GET_TASK_ALLOW</code> sequer aparece na máscara.
+<div class="text-xs op-70 mt-2 leading-relaxed">
+  é um <span class="text-[#00ff41]">OR</span>, nunca um assign — e
+  <code>CS_GET_TASK_ALLOW</code> sequer aparece na máscara.
 </div>
 
-<div class="xnusrc">
-  <code>bsd/kern/kern_proc.c</code> &nbsp;·&nbsp;
-  <code>bsd/sys/codesign.h</code>
+<div class="xnusrc"><code>bsd/kern/kern_proc.c</code></div>
+
+</div>
+
+<div v-click="[2, 3]" class="absolute inset-0">
+
+```text
+$ ./mach_vm_adventures write <pid> <addr> ...
+
+  csflags  →  struct proc, no kernel
+  vm_map   →  o que mach_vm_write alcança
+```
+
+<div class="text-xs op-70 mt-2 leading-relaxed">
+  não tem endereço pra mirar. e é circular: pra escrever eu precisaria
+  justamente do task port que estou tentando conseguir.
+</div>
+
+<div class="xnusrc"><code>bsd/sys/proc_internal.h</code></div>
+
+</div>
+
+<div v-click="[3, 4]" class="absolute inset-0">
+
+```text
+CD flags   0x00010002  →  0x00000002
+
+csflags    0x22011311  →  0x22000201
+codesign --verify      →  valid on disk
+lldb / DYLD_INSERT     →  voltaram
+task_for_pid           →  0x5 ainda
+```
+
+<div class="text-xs op-70 mt-2 leading-relaxed">
+  um byte derruba <code>CS_RUNTIME</code>, <code>CS_FORCED_LV</code>,
+  <code>CS_HARD</code> e <code>CS_ENFORCEMENT</code> — e não adiciona
+  entitlement nenhum.
+</div>
+
+</div>
+
+<div v-click="[4, 5]" class="absolute inset-0">
+
+```text
+$ codesign -s - -f -o runtime \
+    --entitlements get-task-allow.plist th-gta
+
+csflags   0x22010005
+          CS_RUNTIME + CS_GET_TASK_ALLOW
+task_for_pid            →  kr = 0
+```
+
+<div class="text-xs op-70 mt-2 leading-relaxed">
+  hardened runtime <span class="text-[#00ff41]">e</span> debugável ao mesmo
+  tempo. é exatamente um debug build do Xcode.
+</div>
+
+</div>
+
 </div>
 
 <style>
@@ -687,6 +979,16 @@ proc_csflags_set(p, flags);
 }
 .yes {
   color: #00ff41;
+}
+.half {
+  color: #e7c44d;
+}
+.atk pre {
+  font-size: 0.6rem !important;
+  line-height: 1.5;
+}
+.atk code {
+  font-size: inherit;
 }
 </style>
 
@@ -713,14 +1015,39 @@ not configuration. There is no API to relax it.
    to aim at. And it is circular: you would need the task port you are trying to
    obtain in order to write anything at all.
 
-3. Patching the CodeDirectory — I actually did this. Flipped the flags field in
-   the CD blob, cleared CS_RUNTIME. Results: the binary still runs, csflags drops
-   to 0x22000001, and `codesign --verify` still reports "valid on disk" and
-   "satisfies its Designated Requirement" — it does not notice. Adhoc signatures
-   have no CMS signature over the CD, so a modified CD is just a different, valid
-   adhoc identity. AND IT CHANGES NOTHING: task_for_pid still returns 0x5,
-   because CS_RUNTIME was never the blocker. This is the beat of the slide — you
-   successfully attacked the wrong bit.
+3. Patching the CodeDirectory — I actually did this, and this is the beat of
+   the slide. Work on a COPY. The flags field is a big-endian u32 at offset 12 of
+   the CodeDirectory blob; find the blob through LC_CODE_SIGNATURE (dataoff) plus
+   the superblob index. Clear CS_RUNTIME: 0x00010002 -> 0x00000002.
+
+   DEMO ORDER, and it is worth doing live because it undoes the previous slide in
+   one byte:
+
+     a) unpatched target-hardened  — lldb says "Not allowed to attach to
+        process", interpose prints "access denied"
+     b) flip the bit
+     c) the SAME binary — lldb attaches ("frostmourne hungers"), interpose fires
+        ("hello" + "access granted")
+     d) codesign --verify -vvv still says "valid on disk" and "satisfies its
+        Designated Requirement". It does not notice.
+
+   csflags on the patched copy: 0x22000201. Clearing ONE bit took CS_FORCED_LV,
+   CS_HARD and CS_ENFORCEMENT with it, because AMFI derives all three from
+   CS_RUNTIME at exec. That is the cleanest evidence in the talk that those bits
+   are policy, not signature.
+
+   WHY IT WORKS, say it before someone asks: this is an adhoc signature. There is
+   no CMS blob over the CodeDirectory, so a modified CD is just a different,
+   equally valid adhoc identity. A Developer-ID-signed binary would fail here.
+   Do NOT let this land as "code signing is broken".
+
+   AND THE HALF THAT FAILS — task_for_pid STILL returns 0x5 against the patched
+   copy. All four flavors still fail exactly as before; only task_name_for_pid
+   survives. No CD flag flip adds an entitlement, and 0x4 can only come from a
+   signed entitlements blob. So: CS_RUNTIME gates the DEBUGGER, the
+   get-task-allow entitlement gates task_for_pid. Two mechanisms, and this is the
+   single best piece of evidence that they are separate — lldb gets in, our tool
+   still does not.
 
 4. codesign — works because it is the only path that goes back through the
    supported pipeline: new signature on disk, AMFI re-reads it at the next
@@ -730,8 +1057,90 @@ not configuration. There is no API to relax it.
    and task_for_pid succeeded. The two flags are orthogonal. That is exactly what
    an Xcode debug build of a hardened app looks like.
 
-Caveat if asked: all measured with SIP disabled. The CodeDirectory patch in
-particular may behave differently with SIP on.
+Everything on this slide is measured with SIP ENABLED, on a stock machine. The
+csflags numbers under SIP off are different (target-hardened is 0x22010001
+there, without the AMFI-derived bits) but every conclusion on this slide holds
+either way.
+-->
+
+---
+clicks: 1
+---
+
+# e como eu sei disso? desliguei o SIP e refiz tudo
+
+<div class="text-sm op-60 -mt-3 mb-4">mesmo binário, mesma assinatura — só a política do AMFI muda</div>
+
+<div class="sipt">
+
+| medição                            | SIP off      | SIP on       | o que muda, em nome           |
+| ---------------------------------- | ------------ | ------------ | ----------------------------- |
+| `csflags` · `target`               | `0x22000005` | `0x22000205` | `+KILL`                       |
+| `csflags` · `target-hardened`      | `0x22010001` | `0x22011311` | `+FORCED_LV +HARD +KILL +ENFORCEMENT` |
+| `csflags` · `launchd`              | `0x26014a01` | `0x26015b11` | `+FORCED_LV +HARD +ENFORCEMENT` |
+| `DYLD_INSERT` → `target-hardened`  | hook roda    | access denied | quem barra: `FORCED_LV`      |
+| `lldb` → `target-hardened`         | anexa        | attach failed | quem barra: `RUNTIME`        |
+
+</div>
+
+<div class="text-xs op-55 mt-4 leading-relaxed">
+  nomes sem o prefixo <code>CS_</code> &nbsp;·&nbsp; idêntico nos dois:
+  <code>task_for_pid</code> nos três alvos &nbsp;·&nbsp; as quatro flavors
+  &nbsp;·&nbsp; o patch no CodeDirectory &nbsp;·&nbsp; <code>DYLD_INSERT</code> no
+  <code>target</code> &nbsp;·&nbsp; <code>P_TRACED</code>
+</div>
+
+<div v-click="1" class="mt-6 text-sm">
+  <span class="op-60">a assinatura no disco é byte a byte a mesma — quem muda de ideia
+  é o </span><span class="text-[#00ff41]">AMFI</span><span class="op-60">, no </span><code>exec()</code>
+</div>
+
+<style>
+.sipt table {
+  font-size: 0.62rem;
+}
+.sipt th,
+.sipt td {
+  padding: 0.35em 0.7em;
+}
+.sipt td:last-child {
+  color: #00ff41;
+  opacity: 0.85;
+}
+.sipt td:first-child {
+  opacity: 0.75;
+}
+</style>
+
+<!--
+The methodology slide. Short, but it is the one that makes everything before it
+trustworthy — and it is the answer to "mas na minha máquina deu diferente".
+
+How this table exists: every measurement in this talk was originally taken on a
+machine with SIP DISABLED, because that is how the lab was set up. Then I ran
+`csrutil enable`, rebooted, and re-ran the whole list from scratch. Confirm the
+machine first, always: `csrutil status` and `nvram boot-args`.
+
+Read the three csflags rows as one fact: no bit in any of them comes from a
+different signature. The binaries were not rebuilt, not re-signed — the files on
+disk are byte for byte identical across both columns. AMFI simply derives more
+bits at exec() when SIP is on: CS_FORCED_LV, CS_HARD, CS_ENFORCEMENT, CS_KILL.
+
+The two behaviour rows follow from that. CS_FORCED_LV is what kills
+DYLD_INSERT_LIBRARIES against target-hardened, and CS_RUNTIME being actually
+enforced is what makes debugserver get told no. Neither demo works the same way
+in a lab with SIP off — which is exactly the trap I fell into, and the reason
+this slide exists instead of a confident wrong claim.
+
+What did NOT move is just as interesting, and it is the bottom line of the
+slide: task_for_pid against all three targets, all four flavors, the
+CodeDirectory patch, dyld insertion against plain target, P_TRACED. Entitlement
+decisions are AMFI's job with or without SIP. SIP is not the gate people think
+it is — it changes the hardening policy around the gate.
+
+If asked "should I demo with SIP off?": no. You will draw conclusions that do not
+hold on anyone else's machine. Every number on these slides is SIP ON unless the
+slide says otherwise.
 -->
 
 ---
@@ -892,6 +1301,142 @@ de documentação da Apple.
 Ligação com o resto da talk: esse é o vetor mais barato de todos. Nada de
 task_for_pid, nada de csflags, nada de entitlement. Só trocar um símbolo antes
 da main() rodar.
+-->
+
+---
+clicks: 2
+---
+
+# uns macetes aleatórios #2
+
+<div class="text-sm op-60 -mt-3 mb-4">rodar código iOS nativo no Mac — e por que isso é essa talk inteira</div>
+
+<div class="p0">
+
+<div class="pbox">
+  <code>posix_spawn</code> &nbsp;<span class="op-50">· <code>PLATFORM_IOS</code> + <code>START_SUSPENDED</code></span>
+</div>
+<div class="parrow">o processo nasce parado</div>
+<div class="pbox hot">
+  <code>task_for_pid</code> &nbsp;<span class="op-50">· <code>com.apple.security.cs.debugger</code> ou root</span>
+</div>
+<div class="parrow"><code>vm_protect</code> + <code>vm_write</code> &nbsp;·&nbsp; a mesma dupla do nosso <code>hddb</code></div>
+<div class="pbox hot">
+  patch em <code>_amfi_check_dyld_policy_self</code> &nbsp;<span class="op-50">· <code>return 0x5f</code></span>
+</div>
+<div class="parrow">agora o dyld aceita interpose</div>
+<div class="pbox hot">
+  <code>DYLD_INTERPOSE</code> em <code>xpc_copy_entitlements_for_self</code>
+</div>
+<div class="parrow">devolve <code>com.apple.private.security.no-sandbox</code></div>
+<div class="pbox done">
+  <code>libsystem_secinit</code> desiste do sandbox &nbsp;<span class="op-50">· <code>SIGCONT</code></span>
+</div>
+
+</div>
+
+<div v-click="1" class="mt-5 text-xs op-70 leading-relaxed">
+  sem isso: <code>secinit</code> pede perfil pro <code>secinitd(8)</code>, que não
+  reconhece o binário iOS, e o processo dá <code>abort(3)</code>
+  <span class="text-[#00ff41]">antes da <code>main()</code></span>.
+</div>
+
+<div v-click="2" class="mt-3 text-xs op-70 leading-relaxed">
+  <code>secinit</code> <span class="op-60">não é</span> hardened runtime: userspace
+  antes da <code>main()</code>, decide <span class="text-[#00ff41]">sandbox</span> —
+  enquanto <code>CS_RUNTIME</code> é kernel, no <code>exec()</code>. mesmo blob de
+  entitlements, dois momentos.
+</div>
+
+<div class="mt-4 text-[0.6rem] op-45">
+  Samuel Groß · Project Zero · 2021 —
+  <span class="op-70">projectzero.google/2021/05/fuzzing-ios-code-on-macos-at-native.html</span>
+</div>
+
+<style>
+.p0 {
+  margin-top: 0.1rem;
+}
+.pbox {
+  text-align: center;
+  font-size: 0.62rem;
+  padding: 0.4em 0.6em;
+  border: 1px solid #6b7280;
+  border-radius: 2px;
+  background: rgba(107, 114, 128, 0.08);
+  color: #c9ccd1;
+}
+.pbox.hot {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  color: #ffb4b4;
+}
+.pbox.done {
+  border-color: #00ff41;
+  background: rgba(0, 255, 65, 0.08);
+  color: #00ff41;
+}
+.parrow {
+  text-align: center;
+  font-size: 0.55rem;
+  opacity: 0.55;
+  padding: 0.18em 0;
+}
+.parrow::before {
+  content: '↓';
+  display: block;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+</style>
+
+<!--
+The closing callback. Everything in this talk, used by someone else, for real
+work. Three of the four red boxes are demos the audience already watched.
+
+WHAT THEY WANTED: run iOS binaries natively on a Mac, so fuzzing runs at full
+arm64 speed with no emulator. The CPU was never the problem - same instructions.
+The problem is that macOS refuses to finish setting up an iOS process.
+
+THE WALL: libsystem_secinit.dylib, a userspace library initializer that runs
+before main(). Its logic: if the active platform is iOS and the entitlement
+com.apple.private.security.no-sandbox is NOT present, set up the App Sandbox. It
+asks secinitd(8) for a profile, secinitd cannot identify the app, and secinit
+calls abort(3). Dead before main().
+
+THE LOADER, step by step - and this is the slide:
+
+  posix_spawn with PLATFORM_IOS and POSIX_SPAWN_START_SUSPENDED
+  task_for_pid on the suspended child  <- needs com.apple.security.cs.debugger
+                                          or root. OUR ENTITLEMENT SLIDE, exactly.
+  vm_protect + vm_write to patch dyld's _amfi_check_dyld_policy_self so it just
+  returns 0x5f, meaning "interposing is allowed"   <- OUR hddb, exactly: writing
+                                          instructions into another process
+                                          through a task port
+  DYLD_INTERPOSE xpc_copy_entitlements_for_self to claim no-sandbox
+                                       <- OUR FIRST DEMO, exactly
+  SIGCONT
+
+So the punchline to land: they did not find an exotic bug. They used
+task_for_pid, they patched instructions in another process's memory, and they
+swapped a symbol before main(). That is demos 1, 4 and 9 of this deck, composed
+into a working iOS loader.
+
+CLICK 2 - the distinction worth being precise about, because people conflate
+these constantly. libsystem_secinit is userspace, before main(), and decides the
+SANDBOX. Hardened runtime is CS_RUNTIME (0x10000), evaluated by AMFI in the
+KERNEL at exec(). Different layers, different enforcement points. What they share
+is the entitlements blob - read twice, at two different moments. That is the
+symmetry the csflags slide already set up.
+
+ONE MORE THING FROM THE ARTICLE, consistent with our own measurements: AMFI will
+not accept a self-signed certificate for an iOS binary even with SIP off - it
+wants an Apple signature or a valid provisioning profile. So this technique gets
+the process running; it does not get you arbitrary signing.
+
+VERIFIED: author, function names and the entitlement string were read off the
+article, not from memory. It is Samuel Groß, not Ivan Fratric - notes.txt had
+that wrong for a while.
 -->
 
 ---

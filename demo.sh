@@ -32,7 +32,7 @@ step() {
 preflight() {
     local missing=""
     local f
-    for f in target target-hardened interpose.dylib mach_vm_adventures csflags; do
+    for f in target target-hardened interpose.dylib hddb csflags breakpoint_demo.sh; do
         [ -e "$DIR/$f" ] || missing="$missing $f"
     done
     if [ -n "$missing" ]; then
@@ -72,13 +72,13 @@ d2() {
     step || return
     "$DIR/native_target_functions.sh"
     step || return
-    cmd "./disarm_target_functions.sh arthas"
+    cmd "./disarm_target_functions.sh detect_debugger"
     step || return
-    "$DIR/disarm_target_functions.sh" arthas | head -18
+    "$DIR/disarm_target_functions.sh" detect_debugger | head -18
 }
 
 d3() {
-    hdr "arthas - o anti-debug tripando ao vivo"
+    hdr "detect_debugger - o anti-debug tripando ao vivo"
     cmd "./target $PASS"
     step || return
     "$DIR/target" "$PASS"
@@ -110,9 +110,9 @@ d6() {
     step || return
     codesign -d --entitlements - /usr/bin/vmmap 2>/dev/null
     step || return
-    cmd "codesign -d --entitlements - ./mach_vm_adventures"
+    cmd "codesign -d --entitlements - ./hddb"
     step || return
-    codesign -d --entitlements - "$DIR/mach_vm_adventures" 2>&1
+    codesign -d --entitlements - "$DIR/hddb" 2>&1
 }
 
 d7() {
@@ -143,8 +143,20 @@ d8() {
     "$DIR/csflags" 1
 }
 
-FN=(d1 d2 d3 d4 d5 d6 d7 d8)
-LB=(interpose binario arthas reveal hardened entitlements trap csflags)
+d9() {
+    hdr "nosso proprio debugger - brk #0 sem ptrace"
+    need_targets
+    cmd "./breakpoint_demo.sh"
+    step || return
+    "$DIR/breakpoint_demo.sh"
+    step || return
+    cmd "./csflags \$(pgrep -n -x target)     (CS_DEBUGGED nao aparece)"
+    step || return
+    "$DIR/csflags" "$(tpid)"
+}
+
+FN=(d1 d2 d3 d4 d5 d6 d7 d8 d9)
+LB=(interpose binario detect_debugger reveal hardened entitlements trap csflags hddb)
 DS=("DYLD_INTERPOSE, sem kernel"
     "nm / otool / disarm"
     "anti-debug no lldb"
@@ -152,7 +164,8 @@ DS=("DYLD_INTERPOSE, sem kernel"
     "o mesmo read, bloqueado"
     "vmmap vs a nossa tool"
     "si na trap, x0 = 0 vs 5"
-    "o bit que decide tudo")
+    "o bit que decide tudo"
+    "breakpoint nosso, P_TRACED=0")
 CUR=0
 
 menu() {
@@ -161,9 +174,9 @@ menu() {
     local i mark
     for i in "${!FN[@]}"; do
         if [ "$i" -eq "$CUR" ]; then mark="${G}>${N}"; else mark=" "; fi
-        printf '  %s %d  %-14s %s%s%s\n' "$mark" "$((i + 1))" "${LB[$i]}" "$D" "${DS[$i]}" "$N"
+        printf '  %s %d  %-16s %s%s%s\n' "$mark" "$((i + 1))" "${LB[$i]}" "$D" "${DS[$i]}" "$N"
     done
-    printf '\n  %ss%s proximo   %s1-8%s pular   %st%s targets   %sb%s build   %sq%s sair\n' \
+    printf '\n  %ss%s proximo   %s1-9%s pular   %st%s targets   %sb%s build   %sq%s sair\n' \
         "$G" "$N" "$G" "$N" "$G" "$N" "$G" "$N" "$G" "$N"
     printf '  %s(dentro de um demo: s avanca, m volta pro menu, q sai)%s\n\n' "$D" "$N"
     if [ -n "$(tpid)" ] && [ -n "$(hpid)" ]; then
@@ -188,7 +201,7 @@ while true; do
     IFS= read -rsn1 k
     case "$k" in
         s|S|'') printf 's\n'; run_current ;;
-        [1-8])  printf '%s\n' "$k"; CUR=$(( k - 1 )); run_current ;;
+        [1-9])  printf '%s\n' "$k"; CUR=$(( k - 1 )); run_current ;;
         t|T)    printf 't\n'
                 pkill -x target 2>/dev/null
                 pkill -x target-hardened 2>/dev/null
